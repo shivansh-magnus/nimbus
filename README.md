@@ -1,4 +1,4 @@
-# 🤖 Multiagent AutoML
+# Nimbus
 
 > **Intelligent machine learning pipeline orchestration powered by multi-agent LLMs**
 
