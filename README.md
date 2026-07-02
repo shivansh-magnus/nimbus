@@ -363,15 +363,6 @@ All decisions are captured with:
 
 ---
 
-## 🔐 Security & Privacy
-
-- **No Data Upload**: All computation runs locally or on your infrastructure
-- **API Keys**: Stored locally in `.env` (never committed to git)
-- **Output Isolation**: Reports saved to local `runs/` directory (gitignored)
-- **Credential Management**: Uses environment variables; respects `.env.example` template
-
----
-
 ## 🚨 Known Limitations
 
 1. **CSV-Only Input**: Currently accepts CSV files only (future: Parquet, SQL, APIs)
@@ -379,13 +370,6 @@ All decisions are captured with:
 3. **No GPU**: Runs on CPU; GPU optimization planned for v0.2
 4. **Single Agent Execution**: Agents run sequentially (future: parallel agent execution)
 5. **Basic Feature Engineering**: Limited to standard transformations (future: domain-specific plugins)
-
----
-
-## 📚 Documentation
-
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Setup guide for developers
-- **[Roadmap](TODO.md)** - Day-by-day project plan and architecture notes
 
 ---
 
@@ -407,20 +391,9 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
-## 🙋 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes (`git commit -m 'Add feature'`)
-4. Push to the branch (`git push origin feature/your-feature`)
-5. Open a Pull Request
-
----
-
 ## 📧 Questions?
 
-Open an issue on GitHub or check the [DEVELOPMENT.md](DEVELOPMENT.md) guide for local setup help.
+Open an issue on GitHub.
 
 ---
 
