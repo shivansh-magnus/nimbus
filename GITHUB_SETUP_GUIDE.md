@@ -218,13 +218,57 @@ Instead of HTTPS, you can use SSH:
 
 → Run `git remote add origin https://github.com/YOUR_USERNAME/multiagent-automl.git`
 
-### Authentication fails
+### "Invalid username or token. Password authentication is not supported"
 
-→ Use personal access token instead of password:
+→ GitHub requires a **Personal Access Token (PAT)** or **SSH**. Choose one:
 
-- GitHub → Settings → Developer settings → Personal access tokens
-- Generate new token with `repo` scope
-- Use token as password when prompted
+#### Option A: Personal Access Token (RECOMMENDED - Quickest)
+
+1. Go to GitHub → Settings → Developer settings → **Personal access tokens** → **Tokens (classic)**
+2. Click **Generate new token (classic)**
+3. **Token name**: `git-push`
+4. **Expiration**: 90 days (or longer)
+5. **Scopes**: Check `repo` (full control of private repositories)
+6. Click **Generate token** and **copy it immediately** (you won't see it again!)
+7. Try pushing again:
+   ```powershell
+   git push -u origin main
+   ```
+8. When prompted for password, **paste your token** (not your GitHub password)
+
+#### Option B: SSH (More Secure, One-Time Setup)
+
+1. Generate SSH key:
+
+   ```powershell
+   ssh-keygen -t ed25519 -C "your.email@example.com"
+   ```
+
+   Press Enter 3 times to accept defaults
+
+2. Copy your public key:
+
+   ```powershell
+   type $env:USERPROFILE\.ssh\id_ed25519.pub
+   ```
+
+3. Add to GitHub:
+   - Go to GitHub → Settings → **SSH and GPG keys**
+   - Click **New SSH key**
+   - **Title**: `Windows Machine`
+   - **Key**: Paste your public key
+   - Click **Add SSH key**
+
+4. Change your remote to SSH:
+
+   ```powershell
+   git remote set-url origin git@github.com:shivansh-magnus/nimbus.git
+   ```
+
+5. Try pushing again:
+   ```powershell
+   git push -u origin main
+   ```
 
 ---
 
