@@ -19,3 +19,4 @@ mlruns/
 *.parquet
 TODO.md
 GITHUB_SETUP_GUIDE.md
+DEVELOPMENT.md
