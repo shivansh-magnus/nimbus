@@ -31,14 +31,14 @@ def test_all_core_dependencies_importable():
 
 
 def test_schemas_importable_and_instantiable():
-    from automl_agents.schemas import EDAReport, PipelineState  # noqa: F401
+    from automl_agents.schemas import ColumnProfile, EDAReport, PipelineState  # noqa: F401
 
     report = EDAReport(
         n_rows=100,
-        n_cols=5,
-        dtypes={"a": "int64"},
-        missingness={"a": 0.0},
-        cardinality={"a": 100},
+        n_cols=1,
+        columns=[
+            ColumnProfile(column="a", dtype="int64", missing_fraction=0.0, cardinality=100),
+        ],
         problem_type="classification",
     )
     assert report.n_rows == 100

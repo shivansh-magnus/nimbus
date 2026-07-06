@@ -1,8 +1,8 @@
 """
 Provider-agnostic LLM client factory.
 
-Day-1 goal: prove that switching providers is a one-line env var change,
-*before* any agent logic exists. Dev against Groq/Ollama to save Gemini
+switching providers is a one-line env var change, *before* any agent logic exists. 
+Dev against Groq/Ollama to save Gemini
 free-tier quota; switch to Gemini for real agent-reasoning tests and for
 the final demo (see roadmap §4).
 
