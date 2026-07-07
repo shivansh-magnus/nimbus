@@ -1,5 +1,5 @@
 """
-Integration test for Day-6 agentic decisions and leakage detection.
+Integration test for Day-6 agentic decisions and leakage detection (comparing Groq vs Gemini).
 """
 
 from __future__ import annotations
@@ -11,7 +11,14 @@ import pytest
 from automl_agents.graph import graph
 
 
-def test_agentic_leakage_detection():
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("groq", "llama-3.3-70b-versatile"),
+        ("gemini", "gemini-3.1-flash-lite"),
+    ],
+)
+def test_agentic_leakage_detection(provider, model):
     # Use synthetic ground truth dataset
     csv_path = Path("data/raw/synthetic_ground_truth.csv")
     assert csv_path.exists(), "Synthetic dataset must be generated first."
@@ -35,10 +42,10 @@ def test_agentic_leakage_detection():
 
     # Context configuration
     context = {
-        "run_id": "test_agent_decisions_run",
-        "llm_provider": "groq",  # Let's use Groq for faster development
-        "model_name": "llama-3.3-70b-versatile",
-        "max_retries": 2,
+        "run_id": f"test_agent_decisions_{provider}_run",
+        "llm_provider": provider,
+        "model_name": model,
+        "max_retries": 6,
         "token_budget": None,
     }
 
@@ -51,7 +58,7 @@ def test_agentic_leakage_detection():
     prep_plan = final_state["prep_plan"]
     assert prep_plan is not None
     assert "leaky_churn_copy" in prep_plan["drop_cols"], (
-        "Leaky feature 'leaky_churn_copy' was not dropped by the DataPrep Agent!"
+        f"Leaky feature 'leaky_churn_copy' was not dropped by the DataPrep Agent ({provider})!"
     )
 
     # 2. Selected features assertion (should not contain leaky column)
@@ -62,7 +69,7 @@ def test_agentic_leakage_detection():
     for res in final_state["model_results"]:
         for metric, val in res["mean_scores"].items():
             assert val < 1.0 or res["model_id"] == "SVM", (
-                f"Model {res['model_id']} achieved perfect score {val} on '{metric}', indicating leakage was not resolved!"
+                f"Model {res['model_id']} achieved perfect score {val} on '{metric}' with provider {provider}, indicating leakage was not resolved!"
             )
 
     # 4. Token usage tracking assertions
