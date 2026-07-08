@@ -47,12 +47,27 @@ def main() -> int:
         print(f"Error: Dataset {csv_path} not found.")
         return 1
 
+    # Find the previous run matching the standard run_YYYYMMDD_HHMMSS nomenclature
+    import re
+    previous_run = "None"
+    runs_dir = Path("runs")
+    if runs_dir.exists():
+        pattern = re.compile(r"^run_\d{8}_\d{6}$")
+        run_folders = []
+        for path in runs_dir.iterdir():
+            if path.is_dir() and pattern.match(path.name):
+                run_folders.append(path.name)
+        if run_folders:
+            run_folders.sort()
+            previous_run = run_folders[-1]
+
     # Inferred run ID using timestamp
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_id = f"run_{timestamp}"
 
     print(f"=== Starting AutoML StateGraph Run ===")
     print(f"Run ID:        {run_id}")
+    print(f"Previous Run:  {previous_run}")
     print(f"Dataset Path:  {csv_path}")
     print(f"Target Column: {args.target}")
     print("======================================\n")
