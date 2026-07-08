@@ -133,7 +133,44 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             best_model_id = results[0]["model_id"]
             best_score = results[0].get("mean_scores", {}).get(chosen_metric, 0.0)
 
-        logger.info(f"Best model: {best_model_id} with validation {chosen_metric} = {best_score:.4f}")
+        # Step 4.5: Validation Checks for Target Leakage
+        validation_errors = []
+
+        # A. Correlation Check: Flag features correlating with target >= 0.99
+        for col in selected_features:
+            if col in df.columns and col != target_column:
+                try:
+                    import pandas as pd
+                    c_feat = pd.to_numeric(df[col], errors="coerce")
+                    c_targ = pd.to_numeric(df[target_column], errors="coerce")
+                    corr = float(c_feat.corr(c_targ))
+                    if not pd.isna(corr) and abs(corr) >= 0.99:
+                        validation_errors.append(
+                            f"Feature '{col}' correlates with target '{target_column}' at {corr:.4f} -- potential target leakage."
+                        )
+                except Exception as corr_e:
+                    logger.warning(f"Correlation check failed for column {col}: {corr_e}")
+
+        # B. Score Check: Flag perfect cross-validation scores (excluding SVM)
+        for res in results:
+            model_id = res.get("model_id")
+            if model_id == "SVM":
+                continue
+            mean_scores = res.get("mean_scores", {})
+            for metric, val in mean_scores.items():
+                if problem_type == "classification" and metric in ["accuracy", "f1"]:
+                    if val >= 1.0:
+                        validation_errors.append(
+                            f"Model '{model_id}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
+                        )
+                elif problem_type == "regression" and metric == "r2":
+                    if val >= 1.0:
+                        validation_errors.append(
+                            f"Model '{model_id}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
+                        )
+
+        if validation_errors:
+            logger.warning(f"Trainer validation flagged target leakage: {validation_errors}")
 
         # Step 5: Record token usage
         token_entry = record_token_usage("trainer", provider, model or "default", raw_msg)
@@ -147,6 +184,7 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         return {
             "model_results": results,
             "best_model_id": best_model_id,
+            "validation_errors": validation_errors if validation_errors else None,
             "stage_log": [log_entry],
             "token_usage": [token_entry],
         }

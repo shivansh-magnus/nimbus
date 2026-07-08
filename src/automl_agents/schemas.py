@@ -139,6 +139,7 @@ class PipelineState(TypedDict):
     # --- training stage ---
     model_results: list[dict]  # per-candidate CV scores
     best_model_id: str | None
+    validation_errors: list[str] | None
 
     # --- reporting stage ---
     report_path: str | None
