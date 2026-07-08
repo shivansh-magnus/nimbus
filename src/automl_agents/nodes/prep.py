@@ -19,7 +19,7 @@ from automl_agents.tools.preprocessor import (
     save_parquet_snapshot,
     PrepConfig,
 )
-from automl_agents.llm_client import get_llm
+from automl_agents.llm_client import get_llm, llm_retry_decorator
 from automl_agents.llm_util import record_token_usage
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         structured_llm = llm.with_structured_output(PrepPlanSchema, include_raw=True)
 
         logger.info(f"Querying DataPrep Agent using provider={provider}, model={model}...")
-        response = structured_llm.invoke([
+        response = llm_retry_decorator(structured_llm.invoke)([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ])

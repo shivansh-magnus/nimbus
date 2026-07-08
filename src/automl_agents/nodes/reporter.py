@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from langgraph.runtime import Runtime
 
 from automl_agents.schemas import PipelineState, RunConfig, StageLogEntry
-from automl_agents.llm_client import get_llm
+from automl_agents.llm_client import get_llm, llm_retry_decorator
 from automl_agents.llm_util import record_token_usage
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         structured_llm = llm.with_structured_output(ReportExecutiveSummary, include_raw=True)
 
         logger.info(f"Querying Reporter Agent using provider={provider}, model={model}...")
-        response = structured_llm.invoke([
+        response = llm_retry_decorator(structured_llm.invoke)([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ])
@@ -172,6 +172,56 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             f.write("\n".join(report_content))
 
         logger.info(f"Report written to {report_path}")
+
+        # MLflow local experiment tracking
+        try:
+            import os
+            os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+            import mlflow
+            mlflow.set_experiment("nimbus-automl")
+            
+            with mlflow.start_run(run_name=run_id) as run:
+                # Log general parameters
+                mlflow.log_param("target_column", state.get("target_column"))
+                mlflow.log_param("dataset_path", state.get("dataset_path"))
+                mlflow.log_param("best_model_id", best_model_id)
+                mlflow.log_param("llm_provider", provider)
+                mlflow.log_param("llm_model", model)
+                
+                # Log preprocessing plan details
+                if prep_plan:
+                    mlflow.log_param("scale_strategy", prep_plan.get("scale_strategy"))
+                    mlflow.log_param("iqr_k", prep_plan.get("iqr_k"))
+                    mlflow.log_param("dropped_columns_count", len(prep_plan.get("drop_cols", [])))
+                    mlflow.log_param("selected_features_count", len(selected_features))
+                
+                # Log metrics
+                total_tokens = sum((t.get("input_tokens", 0) or 0) + (t.get("output_tokens", 0) or 0) for t in token_usage)
+                mlflow.log_metric("total_tokens_used", total_tokens)
+                
+                prep_retries = state.get("retry_count", {}).get("data_prep", 0)
+                mlflow.log_metric("prep_retries", prep_retries)
+                
+                # Log validation scores for each trained model candidate
+                for res in model_results:
+                    m_clean_id = res["model_id"].replace(" ", "_").replace("(", "").replace(")", "")
+                    for metric, mean_val in res.get("mean_scores", {}).items():
+                        mlflow.log_metric(f"{m_clean_id}_{metric}_mean", mean_val)
+                    for metric, std_val in res.get("std_scores", {}).items():
+                        mlflow.log_metric(f"{m_clean_id}_{metric}_std", std_val)
+                
+                # Log artifacts
+                report_path_str = str(report_path.resolve())
+                if os.path.exists(report_path_str):
+                    mlflow.log_artifact(report_path_str, artifact_path="reports")
+                
+                cleaned_path = state.get("cleaned_data_path")
+                if cleaned_path and os.path.exists(cleaned_path):
+                    mlflow.log_artifact(cleaned_path, artifact_path="datasets")
+                    
+            logger.info("Successfully tracked experiment run in MLflow.")
+        except Exception as mlflow_e:
+            logger.warning(f"Failed to log experiment to MLflow: {mlflow_e}")
 
         log_entry: StageLogEntry = {
             "stage": "reporter",

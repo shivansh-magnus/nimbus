@@ -64,8 +64,14 @@ def get_llm(provider: str | None = None, model: str | None = None, temperature: 
         from langchain_ollama import ChatOllama  # pip install langchain-ollama if you use this path
 
         return ChatOllama(model=model, temperature=temperature)
-
     raise ValueError(f"Unknown provider '{provider}'. Use one of: gemini, groq, ollama.")
+
+
+llm_retry_decorator = retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=4, max=30),
+    reraise=True,
+)
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=20))

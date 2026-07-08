@@ -336,12 +336,21 @@ def test_retry_loop_integration_live():
          patch("automl_agents.nodes.prep.get_llm", side_effect=custom_get_llm):
         final_state = graph.invoke(initial_state, context=context)
 
-    # Print final state to stdout
+    # Print final state and model accuracy/scores to stdout
     import pprint
     print("\n\n" + "="*80)
     print("DEMO: RETRY LOOP INTEGRATION RUN - FINAL STATE (EXCLUDING MODEL BATTERY DETAILS)")
     print("="*80)
     pprint.pprint({k: v for k, v in final_state.items() if k not in ["model_results"]})
+    
+    print("\n" + "="*80)
+    print("DEMO: MODEL BATTERY FINAL CROSS-VALIDATION SCORES (AFTER LEAKAGE RESOLUTION)")
+    print("="*80)
+    for res in final_state["model_results"]:
+        print(f"Model ID: {res['model_id']}")
+        for metric, val in res["mean_scores"].items():
+            std_val = res["std_scores"].get(metric, 0.0)
+            print(f"  - {metric.upper()}: {val:.4f} (± {std_val:.4f})")
     print("="*80 + "\n\n")
 
     # Assertions

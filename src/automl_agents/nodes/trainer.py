@@ -10,8 +10,8 @@ from langgraph.runtime import Runtime
 
 from automl_agents.schemas import PipelineState, RunConfig, StageLogEntry
 from automl_agents.tools.preprocessor import load_parquet_snapshot
-from automl_agents.tools.training import run_model_battery
-from automl_agents.llm_client import get_llm
+from automl_agents.tools.training import run_model_battery, tune_model
+from automl_agents.llm_client import get_llm, llm_retry_decorator
 from automl_agents.llm_util import record_token_usage
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         structured_llm = llm.with_structured_output(TrainerMetricSelection, include_raw=True)
 
         logger.info(f"Querying Trainer Agent using provider={provider}, model={model}...")
-        response = structured_llm.invoke([
+        response = llm_retry_decorator(structured_llm.invoke)([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ])
@@ -108,30 +108,6 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
 
         if not results:
             raise ValueError("Model battery returned no results.")
-
-        # Step 4: Identify best model based on the selected metric
-        # Larger is better for accuracy, f1, r2. Smaller is better for rmse, mae.
-        best_model_id = None
-        is_smaller_better = chosen_metric in ["rmse", "mae"]
-        best_score = float("inf") if is_smaller_better else float("-inf")
-
-        for res in results:
-            mean_scores = res.get("mean_scores", {})
-            score = mean_scores.get(chosen_metric)
-            if score is not None:
-                if is_smaller_better:
-                    if score < best_score:
-                        best_score = score
-                        best_model_id = res["model_id"]
-                else:
-                    if score > best_score:
-                        best_score = score
-                        best_model_id = res["model_id"]
-
-        # Fallback if preferred metric not found
-        if best_model_id is None:
-            best_model_id = results[0]["model_id"]
-            best_score = results[0].get("mean_scores", {}).get(chosen_metric, 0.0)
 
         # Step 4.5: Validation Checks for Target Leakage
         validation_errors = []
@@ -172,13 +148,76 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         if validation_errors:
             logger.warning(f"Trainer validation flagged target leakage: {validation_errors}")
 
+        # Run Optuna tuning ONLY if no leakage was detected
+        if not validation_errors:
+            is_smaller_better = chosen_metric in ["rmse", "mae"]
+            
+            def get_model_metric_score(r):
+                score = r.get("mean_scores", {}).get(chosen_metric)
+                if score is None:
+                    return float("inf") if is_smaller_better else float("-inf")
+                return score
+
+            sorted_results = sorted(
+                results,
+                key=get_model_metric_score,
+                reverse=not is_smaller_better,
+            )
+            
+            top_candidates = []
+            for r in sorted_results:
+                m_id = r["model_id"]
+                if m_id not in top_candidates:
+                    top_candidates.append(m_id)
+                if len(top_candidates) == 2:
+                    break
+
+            logger.info(f"Top 2 models selected for hyperparameter tuning: {top_candidates}")
+            for tc_model_id in top_candidates:
+                try:
+                    logger.info(f"Tuning {tc_model_id} via Optuna...")
+                    tuned_res = tune_model(
+                        df_sliced,
+                        target_column,
+                        tc_model_id,
+                        problem_type,
+                        chosen_metric,
+                        cv=cv_folds,
+                        n_trials=10,
+                    )
+                    if tuned_res:
+                        results.append(tuned_res)
+                except Exception as tune_e:
+                    logger.error(f"Failed to tune {tc_model_id}: {tune_e}", exc_info=True)
+
+        # Step 4: Identify best model based on the selected metric (baseline + tuned candidates)
+        best_model_id = None
+        is_smaller_better = chosen_metric in ["rmse", "mae"]
+        best_score = float("inf") if is_smaller_better else float("-inf")
+
+        for res in results:
+            mean_scores = res.get("mean_scores", {})
+            score = mean_scores.get(chosen_metric)
+            if score is not None:
+                if is_smaller_better:
+                    if score < best_score:
+                        best_score = score
+                        best_model_id = res["model_id"]
+                else:
+                    if score > best_score:
+                        best_score = score
+                        best_model_id = res["model_id"]
+
+        if best_model_id is None:
+            best_model_id = results[0]["model_id"]
+
         # Step 5: Record token usage
         token_entry = record_token_usage("trainer", provider, model or "default", raw_msg)
 
         log_entry: StageLogEntry = {
             "stage": "trainer",
             "status": "ok",
-            "message": f"Trained CV model battery. Best model: {best_model_id} (using LLM-chosen metric '{chosen_metric}'). Rationale: {selection.rationale}",
+            "message": f"Trained CV model battery and tuned top candidates. Best model: {best_model_id} (using LLM-chosen metric '{chosen_metric}'). Rationale: {selection.rationale}",
         }
 
         return {
