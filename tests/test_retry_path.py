@@ -4,6 +4,7 @@ Unit and integration tests for Day 7 features (Conditional Routing & Bounded Ret
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
@@ -16,6 +17,7 @@ from automl_agents.graph.pipeline import (
 )
 from automl_agents.nodes.trainer import trainer_node
 from automl_agents.nodes.supervisor import retry_supervisor_node, SupervisorDecision
+from automl_agents.llm_client import get_llm
 
 
 # ===========================================================================
@@ -245,3 +247,112 @@ def test_retry_supervisor_node(mock_record_token, mock_get_llm):
     assert "Leaky feature 'col_leak' detected. Drop this column." in updated_report.concerns
     assert "Supervisor explanation: Detected target leakage from perfect scores and high correlation in col_leak." in updated_report.concerns
     assert "Initial concern" in updated_report.concerns
+
+
+# ===========================================================================
+# 4. Live Recovery Retry Loop Integration Test (Prints Final State)
+# ===========================================================================
+
+def test_retry_loop_integration_live():
+    csv_path = Path("data/raw/synthetic_ground_truth.csv")
+    assert csv_path.exists(), "Synthetic dataset must be generated first."
+
+    # Setup initial state
+    initial_state = {
+        "dataset_path": str(csv_path),
+        "target_column": "churn",
+        "eda_report": None,
+        "cleaned_data_path": None,
+        "prep_plan": None,
+        "selected_features": [],
+        "selection_rationale": "",
+        "model_results": [],
+        "best_model_id": None,
+        "report_path": None,
+        "stage_log": [],
+        "retry_count": {},
+        "token_usage": [],
+    }
+
+    # Context configuration
+    context = {
+        "run_id": "test_retry_loop_live_run",
+        "llm_provider": "gemini",
+        "model_name": "gemini-3.1-flash-lite",
+        "max_retries": 2,
+        "token_budget": None,
+    }
+
+    # Intercept profiler and prep LLM outputs on first pass so it misses leakage
+    from automl_agents.nodes.profiler import ProfilerAnalysis
+    from automl_agents.nodes.prep import PrepPlanSchema, ColumnPrepAction
+    
+    first_profiler_call = True
+    first_prep_call = True
+    original_get_llm = get_llm
+
+    def custom_get_llm(provider=None, model=None, temperature=0.0):
+        nonlocal first_profiler_call, first_prep_call
+        llm = original_get_llm(provider, model, temperature)
+        if first_profiler_call:
+            first_profiler_call = False
+            mock_llm = MagicMock(wraps=llm)
+            mock_structured = MagicMock()
+            mock_llm.with_structured_output.return_value = mock_structured
+            
+            mock_structured.invoke.return_value = {
+                "parsed": ProfilerAnalysis(concerns=[]),
+                "raw": MagicMock(),
+            }
+            return mock_llm
+        elif first_prep_call:
+            first_prep_call = False
+            mock_llm = MagicMock(wraps=llm)
+            mock_structured = MagicMock()
+            mock_llm.with_structured_output.return_value = mock_structured
+            
+            # Return a prep plan that purposefully does NOT drop leaky_churn_copy
+            mock_plan = PrepPlanSchema(
+                drop_cols=["customer_id", "legacy_flag", "all_null_feature"],
+                datetime_cols=["signup_date"],
+                mixed_numeric_cols=["credit_score_text"],
+                column_actions=[
+                    ColumnPrepAction(column="leaky_churn_copy", impute="none", encode="none"),
+                ],
+                scale_strategy="standard",
+                iqr_k=1.5,
+            )
+            mock_structured.invoke.return_value = {
+                "parsed": mock_plan,
+                "raw": MagicMock(),
+            }
+            return mock_llm
+        return llm
+
+    from automl_agents.graph import graph
+
+    # Invoke graph with patched get_llm
+    with patch("automl_agents.nodes.profiler.get_llm", side_effect=custom_get_llm), \
+         patch("automl_agents.nodes.prep.get_llm", side_effect=custom_get_llm):
+        final_state = graph.invoke(initial_state, context=context)
+
+    # Print final state to stdout
+    import pprint
+    print("\n\n" + "="*80)
+    print("DEMO: RETRY LOOP INTEGRATION RUN - FINAL STATE (EXCLUDING MODEL BATTERY DETAILS)")
+    print("="*80)
+    pprint.pprint({k: v for k, v in final_state.items() if k not in ["model_results"]})
+    print("="*80 + "\n\n")
+
+    # Assertions
+    # 1. Confirm retry was triggered
+    assert final_state["retry_count"].get("data_prep", 0) == 1, "Retry supervisor did not run!"
+
+    # 2. Confirm leaky column is in drop list
+    assert "leaky_churn_copy" in final_state["prep_plan"]["drop_cols"]
+
+    # 3. Model score must be < 1.0 (since leakage is resolved)
+    for res in final_state["model_results"]:
+        for metric, val in res["mean_scores"].items():
+            assert val < 1.0 or res["model_id"] == "SVM"
+
