@@ -107,3 +107,115 @@ with mlflow.start_run(run_name=run_id):
 1. **Exponential Backoff**: We wrap the API invocation in a retry loop using the `tenacity` library, multiplying wait times exponentially between retries.
 2. **Jitter**: We add random noise (jitter) to the wait interval to prevent concurrent failing queries from calling the API at the exact same millisecond (preventing thundering herd problems).
 3. **Graceful Fallbacks**: If the rate limit is exceeded beyond maximum retries, the code fails gracefully and falls back to deterministic defaults (e.g. standard prep settings) without crashing the runtime graph.
+
+---
+
+# Implementation Plan — Day 8 (Tuning, Tracking, Resilience)
+
+This plan details the implementation of hyperparameter tuning via Optuna, local experiment tracking via MLflow, and API resilience via Tenacity retry decorators.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> - **Optuna Tuning**: Tuning will be done on the top-2 model candidates from the baseline battery. It runs inside cross-validation training folds to ensure no data leakage. The results will be appended to the state's `model_results` list under the ID `{model_id} (Tuned)`.
+> - **MLflow Integration**: Experiment logging is integrated directly within `reporter_node` (the final step of the graph), ensuring that any graph run (CLI, tests, or staging) automatically records metrics and artifacts.
+> - **API Retry Decorator**: All agent nodes will wrap their structured LLM invoke calls with a `tenacity`-based exponential backoff retry wrapper to handle transient 429 rate limit exceptions.
+
+---
+
+## Open Questions
+
+None.
+
+---
+
+## Proposed Changes
+
+### 1. Tools Update
+
+#### [MODIFY] [training.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/tools/training.py)
+- Import `optuna`.
+- Implement `tune_model`:
+  - Accepts the dataset, target column, model ID, problem type, optimization metric, CV folds, and number of trials.
+  - Suppresses Optuna warning logs to keep the console clean.
+  - Defines hyperparameter search spaces for: `LogisticRegression`, `LinearRegression`, `RandomForest`, `GradientBoosting`, `XGBoost`, `LightGBM`, `SVM`/`SVR`, and `KNN`.
+  - Runs the Optuna optimization study (direction: `minimize` for `rmse`/`mae`, otherwise `maximize`) utilizing TPE sampling.
+  - Evaluates models inside the cross-validation folds to prevent leakage.
+  - Re-evaluates the best found parameters to capture the full score dictionary.
+  - Returns a dictionary formatted like the baseline model results, with `model_id` set to `"{model_id} (Tuned)"`.
+
+---
+
+### 2. Node & Client Updates
+
+#### [MODIFY] [llm_client.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/llm_client.py)
+- Import `retry`, `stop_after_attempt`, and `wait_exponential` from `tenacity`.
+- Define and export a reusable `llm_retry_decorator`:
+  ```python
+  llm_retry_decorator = retry(
+      stop=stop_after_attempt(5),
+      wait=wait_exponential(multiplier=2, min=4, max=30),
+      reraise=True,
+  )
+  ```
+
+#### [MODIFY] Node LLM Call Wrappers
+- Wrap the `.invoke` call of the structured LLM inside each node file with `llm_retry_decorator` to introduce rate-limit recovery:
+  - **[MODIFY] [profiler.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/profiler.py)**
+  - **[MODIFY] [prep.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/prep.py)**
+  - **[MODIFY] [selector.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/selector.py)**
+  - **[MODIFY] [trainer.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/trainer.py)**
+  - **[MODIFY] [supervisor.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/supervisor.py)**
+  - **[MODIFY] [reporter.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/reporter.py)**
+
+---
+
+### 3. Hyperparameter Tuning Integration
+
+#### [MODIFY] [trainer.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/trainer.py)
+- Inside `trainer_node`:
+  - After executing `run_model_battery` and finding `best_model_id`:
+    - Rank the models based on the LLM-selected metric.
+    - Identify the top-2 model candidates.
+    - Loop over the top-2 candidates and invoke `tune_model` for each (using a default of 10 trials).
+    - If a tuned model performs better than or equal to its baseline, or simply for logging, append/insert the tuned result dictionary into `model_results`.
+    - Re-evaluate the best model selection considering the new tuned candidates.
+
+---
+
+### 4. MLflow Tracking Integration
+
+#### [MODIFY] [reporter.py](file:///c:/Users/dwive/OneDrive/Desktop/nimbus/src/automl_agents/nodes/reporter.py)
+- Import `mlflow`.
+- Inside `reporter_node` (after the report markdown is written to disk):
+  - Set the experiment to `"nimbus-automl"`.
+  - Start an active MLflow run with name `run_id`.
+  - Log parameters:
+    - Target column, dataset path, problem type.
+    - Preprocessing strategy choices (scaling strategy, drop list, imputation choices, etc. from `prep_plan`).
+    - Best model ID.
+    - Candidate models trained.
+  - Log metrics:
+    - Total LLM tokens consumed (prompt + completion tokens).
+    - Number of preprocessing retry cycles.
+    - Scores (e.g. CV mean and std) for all trained model battery and tuned candidates.
+  - Log artifacts:
+    - The generated `report.md`.
+    - The stage-cleaned parquet snapshot from `cleaned_data_path`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Run the full pytest suite: `uv run pytest`.
+- Write new unit and integration tests under `tests/test_mlflow_logging.py` verifying:
+  1. **Optuna Tuning**: Asserts that `tune_model` successfully optimizes hyperparams and returns formatted metrics.
+  2. **Tenacity Backoff**: Asserts that rate limits/transient exceptions on LLM client calls are caught and retried by the decorator.
+  3. **MLflow Log Entry**: Asserts that invoking the pipeline compiles and creates an MLflow run local entry, logging the expected parameters, metrics, and artifact paths.
+
+### Manual Verification
+- Execute `uv run python scripts/run_pipeline.py` and inspect `./mlruns` directory or run `mlflow ui` locally to visually audit the tracked experiments and parameters.
+
