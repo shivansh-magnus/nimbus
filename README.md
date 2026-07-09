@@ -196,6 +196,45 @@ uv run nimbus stress-test
 uv run mlflow ui
 # open http://localhost:5000, experiment "nimbus-automl"
 ```
+
+### CLI Command Reference
+
+Nimbus uses a single unified command-line entrypoint. You can discover commands and options using:
+
+```bash
+uv run nimbus --help
+```
+
+Here are the commands available:
+
+* **`uv run nimbus run`**
+  Runs the multi-agent AutoML pipeline end-to-end on a CSV dataset.
+  * Options:
+    * `--csv PATH`: Path to raw CSV (default: `data/raw/synthetic_ground_truth.csv`).
+    * `--target COL`: Name of the target column (default: `churn`).
+    * `--provider PROVIDER`: LLM provider to use (`gemini` | `groq` | `ollama`, default: `gemini`).
+
+* **`uv run nimbus stress-test`**
+  Runs the pipeline sequentially across all datasets in the project manifest (`data/raw/manifest.json`), printing a summary table of results and status.
+
+* **`uv run nimbus serve-mcp`**
+  Starts the FastMCP tool server.
+  * Options:
+    * `--transport stdio|streamable-http`: Transport protocol (default: `streamable-http`).
+    * `--port PORT`: Port for HTTP transport (default: `8000`).
+
+* **`uv run nimbus verify-providers`**
+  Smoke-tests all configured LLM APIs (Gemini, Groq, Ollama) by sending small requests to ensure connectivity and keys are correct.
+
+* **`uv run nimbus generate-data`**
+  Generates the synthetic ground-truth dataset (`synthetic_ground_truth.csv` with a leaky column, missing values, etc.) for testing and evals.
+  * Options:
+    * `--output-dir DIR`: Directory to write output to (default: `data/raw`).
+    * `--n-rows INT`: Rows to generate (default: `2000`).
+    * `--seed INT`: Random seed (default: `42`).
+
+* **`uv run nimbus download-data`**
+  Fetches standard real-world CSV datasets (Titanic, Wine Quality, California Housing) and saves them under `data/raw/` with a manifest.
  
 ---
  
@@ -358,6 +397,29 @@ uv run nimbus serve-mcp --transport stdio
 | `run_stress_test` | Runs the pipeline against all local datasets (long-running). |
  
 **Security:** `dataset_path` is validated against an allow-list directory (`data/raw/`) — arbitrary filesystem paths are rejected before the graph ever runs. This matters since the default transport is network-reachable.
+
+#### Testing the MCP Server with MCP Inspector
+
+You can test and run tool calls against the server interactively without configuring a full client or Claude Desktop using the official `@modelcontextprotocol/inspector`:
+
+1. Start the Nimbus MCP server in one terminal:
+   ```bash
+   uv run nimbus serve-mcp
+   ```
+2. In a separate terminal, launch the Inspector:
+   ```bash
+   npx @modelcontextprotocol/inspector
+   ```
+3. Open the displayed URL (usually `http://localhost:6274`) in your browser.
+4. In the connection pane (left sidebar):
+   * Select **Streamable HTTP** as the *Transport type*.
+   * Enter the URL: `http://localhost:8000/mcp` (Ensure you append `/mcp` to the host/port).
+   * Click **Connect**.
+5. You can now browse the schema and test calls to any of the 4 tools.
+
+<p align="center">
+  <img src="data/readme/image.png" alt="MCP Inspector Tool Execution" width="800" />
+</p>
  
 **Claude Desktop config** (streamable-http):
 ```json
