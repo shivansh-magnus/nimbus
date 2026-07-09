@@ -29,7 +29,7 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraph), running on Gemi
 - [Supported Models](#supported-models)
 - [Testing](#testing)
 - [Known Limitations](#known-limitations)
-- [Design Decisions (Interview Q&A)](#design-decisions-interview-qa)
+- [Design Decisions](#design-decisions)
 - [Build Log](#build-log)
 - [Tech Stack](#tech-stack)
 - [License](#license)
@@ -89,7 +89,7 @@ flowchart LR
  
 *Purple = agentic (LLM structured-output call inside the node). Teal = mostly deterministic. Dashed edge = the bounded retry loop.*
  
-Simplified on purpose: `Data Prep`, `Feature Selector`, and `Trainer` are each drawn as one box, but in `pipeline.py` they're registered as **two graph nodes apiece** — `classification_prep`/`regression_prep`, `classification_selector`/`regression_selector`, `classification_trainer`/`regression_trainer` — all pointing at the same underlying function (`prep_node`, `selector_node`, `trainer_node`). `route_after_profiler` picks the branch right after the Profiler; `route_after_supervisor` picks it again on the way back from a retry. Same logic, two node names, so LangGraph's own execution logs stay traceable without duplicating code (see [Design Decisions](#design-decisions-interview-qa)).
+Simplified on purpose: `Data Prep`, `Feature Selector`, and `Trainer` are each drawn as one box, but in `pipeline.py` they're registered as **two graph nodes apiece** — `classification_prep`/`regression_prep`, `classification_selector`/`regression_selector`, `classification_trainer`/`regression_trainer` — all pointing at the same underlying function (`prep_node`, `selector_node`, `trainer_node`). `route_after_profiler` picks the branch right after the Profiler; `route_after_supervisor` picks it again on the way back from a retry. Same logic, two node names, so LangGraph's own execution logs stay traceable without duplicating code (see [Design Decisions](#design-decisions)).
  
 ### The Agent Roster
  
@@ -382,7 +382,7 @@ Stated plainly, because knowing the limits of what you built is worth more than 
 - **`RunConfig.token_budget` is tracked but not enforced.** Token usage is logged per stage and totaled in the report, but no code path currently halts a run for exceeding it.
 - **CV folds are hardcoded to 3** inside `trainer_node`, not exposed via `RunConfig`.
 - **Dataset battery covers 4 of the ~6–8 datasets** the original roadmap called for (Titanic, Wine Quality, California Housing, synthetic churn). `stress_test.py` already has a dangling reference to a `"telco_churn"` dataset ID for eval purposes — Adult Census Income, Telco Churn, and Credit Card Fraud (a genuine imbalance stress test) are the natural next additions.
-- **No human approval gate** before a prep plan or custom transform is applied — appropriate for a portfolio/demo project, not for a production data pipeline touching real customer data.
+- **No human approval gate** before a prep plan or custom transform is applied.
 ---
  
 ## Design Decisions
