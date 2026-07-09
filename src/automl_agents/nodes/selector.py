@@ -92,8 +92,8 @@ def selector_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             {"role": "user", "content": user_prompt},
         ])
 
-        decision = response["parsed"]
-        raw_msg = response["raw"]
+        decision = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Run feature selection
         selected_features = run_selection(

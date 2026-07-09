@@ -76,8 +76,8 @@ def retry_supervisor_node(state: PipelineState, runtime: Runtime[RunConfig]) -> 
             {"role": "user", "content": user_prompt},
         ])
 
-        decision = response["parsed"]
-        raw_msg = response["raw"]
+        decision = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Record token usage
         token_entry = record_token_usage("retry_supervisor", provider, model or "default", raw_msg)

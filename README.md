@@ -2,9 +2,9 @@
  
 **A multi-agent AutoML pipeline that reasons about your dataset instead of guessing.**
  
-CSV in → LLM agents profile it, clean it, select features, train a model battery, tune the winners, and hand you back a report — with a bounded retry loop that catches its own mistakes and a sandboxed escape hatch for the transformations no tool library anticipates.
+CSV in → LLM agents profile it, clean it, select features, train a model battery, tune the winners, and hand you back a report **and a deployable model bundle** — with a bounded retry loop that catches its own mistakes, a sandboxed escape hatch for the transformations no tool library anticipates, and an MCP server that lets other agents call the whole pipeline as a tool.
  
-> **6 agents** · **4 stress-tested datasets** · **10 pytest modules** · **bounded 2-retry leakage loop** · **$0 to run**
+> **6 agents** · **4 stress-tested datasets** · **13 pytest modules** · **bounded 2-retry leakage loop** · **MCP-ready** · **$0 to run**
  
 Built on [LangGraph](https://github.com/langchain-ai/langgraph), running on Gemini's free tier by default. Package name is `multiagent-automl`; the project goes by **Nimbus**.
  
@@ -46,6 +46,7 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraph), running on Gemi
 ✂️  Feature Selector — LLM picks a pruning method + threshold, returns rationale
     ↓
 🎯  Trainer          — fixed CV model battery, LLM picks the metric, Optuna tunes top-2
+    ↓                    → fits winner on full data → saves model.pkl bundle
     ↓
 📊  Reporter         — narrative summary + markdown report + MLflow experiment log
 ```
@@ -155,11 +156,11 @@ cp .env.example .env
 # edit .env — add GOOGLE_API_KEY and/or GROQ_API_KEY
  
 # fetch the real-world fixture datasets + build the synthetic ground-truth set
-uv run python scripts/download_datasets.py
-uv run python scripts/generate_synthetic.py
+uv run nimbus download-data
+uv run nimbus generate-data
  
 # confirm your provider(s) actually respond
-uv run python scripts/verify_providers.py
+uv run nimbus verify-providers
  
 # run the full test suite
 uv run pytest tests/ -v
@@ -168,21 +169,25 @@ uv run pytest tests/ -v
 **Run the pipeline on the built-in synthetic dataset:**
  
 ```bash
+# via the Typer CLI (recommended — single installable entrypoint)
+uv run nimbus run --csv data/raw/synthetic_ground_truth.csv --target churn
+ 
+# or via the raw script (still works, no breaking changes)
 uv run python scripts/run_pipeline.py \
   --csv data/raw/synthetic_ground_truth.csv \
   --target churn
 ```
  
-This writes `runs/run_{timestamp}/02_cleaned.parquet` and `runs/run_{timestamp}/report.md`, and logs an experiment run to MLflow's local file store. Point it at any CSV of your own the same way:
+This writes `runs/run_{timestamp}/02_cleaned.parquet`, `runs/run_{timestamp}/model.pkl` (the deployable model bundle), and `runs/run_{timestamp}/report.md`, and logs an experiment run to MLflow's local file store. Point it at any CSV of your own the same way:
  
 ```bash
-uv run python scripts/run_pipeline.py --csv path/to/your_data.csv --target your_target_column
+uv run nimbus run --csv path/to/your_data.csv --target your_target_column
 ```
  
 **Run it across every dataset at once** (the stress-test harness — see [Deep Dives](#deep-dives)):
  
 ```bash
-uv run python scripts/stress_test.py
+uv run nimbus stress-test
 ```
  
 **Inspect tracked experiments:**
@@ -237,12 +242,15 @@ nimbus/
 │   ├── schemas.py             # PipelineState, RunConfig, EDAReport (list-of-records)
 │   ├── llm_client.py          # get_llm() provider factory + llm_retry_decorator
 │   ├── llm_util.py            # cross-provider token-usage extraction
+│   ├── cli.py                 # Day-10: Typer CLI (nimbus run, serve-mcp, etc.)
+│   ├── mcp_server.py          # Day-10: FastMCP server (streamable-http + stdio)
 │   │
 │   ├── tools/                 # deterministic, pure functions — no LLM calls, no graph state
 │   │   ├── profiler.py        # dtype inference, missingness, correlation, IQR outliers
 │   │   ├── preprocessor.py    # fit/transform split — impute, encode, scale, datetime features
 │   │   ├── selection.py       # variance / correlation / mutual_info / rf_importance pruning
-│   │   ├── training.py        # stratified-CV model battery + Optuna tuning
+│   │   ├── training.py        # stratified-CV model battery + Optuna tuning + _build_estimator
+│   │   ├── model_export.py    # Day-10: fit_final_model, save/load/predict_from_bundle
 │   │   ├── custom_transform.py# sandboxed subprocess code execution (the escape hatch)
 │   │   └── eval.py            # run_agent_evals — rubric-based agent-reasoning scorer
 │   │
@@ -250,7 +258,7 @@ nimbus/
 │   │   ├── profiler.py        # profiler_node + ProfilerAnalysis
 │   │   ├── prep.py            # prep_node + PrepPlanSchema / ColumnPrepAction
 │   │   ├── selector.py        # selector_node + SelectorDecision
-│   │   ├── trainer.py         # trainer_node + TrainerMetricSelection + leakage checks
+│   │   ├── trainer.py         # trainer_node + TrainerMetricSelection + leakage + model export
 │   │   ├── supervisor.py      # retry_supervisor_node + SupervisorDecision
 │   │   └── reporter.py        # reporter_node + ReportExecutiveSummary + MLflow logging
 │   │
@@ -267,7 +275,7 @@ nimbus/
 │   └── verify_providers.py    # smoke-tests every configured LLM provider
 │
 ├── data/raw/                  # CSVs + manifest.json (gitignored, generated by scripts)
-├── runs/                      # per-run parquet snapshots, report.md, mlruns/ (gitignored)
+├── runs/                      # per-run parquet snapshots, report.md, model.pkl, mlruns/
 └── pyproject.toml
 ```
  
@@ -325,10 +333,73 @@ Every run is logged to a local MLflow file store, experiment name **`nimbus-auto
  
 - **Params:** target column, dataset path, best model ID, LLM provider/model, scaling strategy, IQR clip factor, dropped-column count, selected-feature count.
 - **Metrics:** total LLM tokens consumed (input + output, summed across every agent call this run), number of Data Prep retry cycles, mean and std CV score per model per metric (baseline and Optuna-tuned candidates alike).
-- **Artifacts:** the generated `report.md`, the cleaned parquet snapshot.
+- **Artifacts:** the generated `report.md`, the cleaned parquet snapshot, and the `model.pkl` bundle (Day-10).
 Every structured LLM call appends a `TokenUsageEntry` to `state["token_usage"]` (an `operator.add`-reduced list, so nodes append rather than overwrite). `llm_util.extract_token_usage` normalizes the field names across providers — Gemini's `usage_metadata` (`prompt_tokens` / `candidates_tokens`) vs. Groq's `token_usage` (`prompt_tokens` / `completion_tokens`) — so the final report's token table is provider-agnostic. That table turns a free-tier budget constraint into a concrete artifact: a real cost/latency breakdown per pipeline stage, generated automatically on every run.
  
----
+### Running Nimbus as an MCP Server
+ 
+Nimbus exposes the full pipeline as an MCP server so external agents (Claude Desktop, Claude Code, or any MCP client) can call it as a tool:
+ 
+```bash
+# Start the server (default: streamable-http on port 8000)
+uv run nimbus serve-mcp
+ 
+# Or via stdio for local Claude Desktop subprocess integration
+uv run nimbus serve-mcp --transport stdio
+```
+ 
+**Exposed tools** (4 total, narrow surface — no file-write/delete tools):
+ 
+| Tool | What it does |
+|---|---|
+| `run_automl_pipeline` | Runs the full LangGraph pipeline on a CSV. Returns `best_model_id`, `model_path`, `report_path`, `selected_features`. |
+| `get_run_report` | Returns the markdown contents of a past run's `report.md`. |
+| `list_local_datasets` | Lists all CSVs available under `data/raw/` (reads `manifest.json`). |
+| `run_stress_test` | Runs the pipeline against all local datasets (long-running). |
+ 
+**Security:** `dataset_path` is validated against an allow-list directory (`data/raw/`) — arbitrary filesystem paths are rejected before the graph ever runs. This matters since the default transport is network-reachable.
+ 
+**Claude Desktop config** (streamable-http):
+```json
+{
+  "mcpServers": {
+    "nimbus": {
+      "url": "http://localhost:8000/mcp/"
+    }
+  }
+}
+```
+ 
+### Downloading and Using a Trained Model
+ 
+Every successful pipeline run now saves a self-contained model bundle at `runs/{run_id}/model.pkl`. The bundle contains the fitted model **plus** the exact preprocessing artifacts used during training, so raw CSV rows can be transformed and predicted on identically:
+ 
+```python
+from automl_agents.tools.model_export import load_model_bundle, predict_from_bundle
+import pandas as pd
+ 
+# Load the bundle
+bundle = load_model_bundle("runs/run_20260709_082521/model.pkl")
+print(bundle["model_id"])         # e.g. "LightGBM (Tuned)"
+print(bundle["selected_features"])# features the model was trained on
+ 
+# Predict on new, raw CSV rows — preprocessing is applied automatically
+new_data = pd.read_csv("new_customers.csv")
+predictions = predict_from_bundle(bundle, new_data)
+print(predictions)                # array of class labels or regression values
+```
+ 
+**What's inside the bundle** (a plain dict, not a custom class):
+ 
+| Key | Contents |
+|---|---|
+| `model` | Fitted scikit-learn-compatible estimator |
+| `prep_artifacts` | The exact `PrepArtifacts` from fit-time (imputer fills, encoder mappings, scaler params) |
+| `selected_features` | Ordered list of feature column names |
+| `target_column` | Name of the target column |
+| `problem_type` | "classification" or "regression" |
+| `model_id` | Human-readable model identifier (e.g. "LightGBM (Tuned)") |
+ 
  
 ## Supported Models
  
@@ -365,6 +436,9 @@ uv run pytest tests/ -v
 | `test_retry_path.py` | Routing functions, trainer leakage-detection logic, supervisor decision handling, a **live** end-to-end retry-loop run |
 | `test_agent_decisions.py` | Live leakage-detection integration test across Groq and Gemini |
 | `test_pipeline.py` | Full end-to-end graph run — asserts every stage logs `"ok"` and produces its expected output |
+| `test_model_export.py` | Day-10: `_build_estimator` param honouring, full bundle round-trip (fit→save→load→predict), invalid bundle detection |
+| `test_mcp_server.py` | Day-10: path allow-list enforcement, `list_local_datasets`, `get_run_report` error handling |
+| `test_cli.py` | Day-10: Typer CliRunner tests for all subcommand `--help` + `generate-data` + error exit codes |
  
 Tests marked "live" hit a real LLM provider and require a valid API key in `.env`.
  
@@ -405,24 +479,80 @@ A bigger, paid model for the reasoning-heavy Profiler step; real sandboxing (gVi
  
 <details>
 <summary><strong>Full list (click to expand)</strong></summary>
-| Layer | Choice |
-|---|---|
-| Orchestration | LangGraph (`StateGraph`, conditional edges for the retry path) |
-| LLM (primary) | Gemini 3.1 Flash-Lite (free tier) via `langchain-google-genai` |
-| LLM (dev-time) | Groq free tier (Llama 3.3 70B) or local Ollama |
-| Structured outputs | Pydantic + `with_structured_output` |
-| Resilience | `tenacity` (exponential backoff on all LLM calls) |
-| Data handling | pandas, pyarrow (parquet snapshots) |
-| Classical ML | scikit-learn, XGBoost, LightGBM |
-| Hyperparameter tuning | Optuna (local, TPE sampler) |
-| Feature selection | scikit-learn (`mutual_info`, `VarianceThreshold`), `feature-engine` |
-| Experiment tracking | MLflow (local file-store mode) |
-| Testing | pytest, pytest-cov |
-| CLI | `argparse` |
-| Package management | `uv` |
- 
+
+<table>
+  <thead>
+    <tr>
+      <th>Layer</th>
+      <th>Choice</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Orchestration</td>
+      <td>LangGraph (<code>StateGraph</code>, conditional edges for the retry path)</td>
+    </tr>
+    <tr>
+      <td>LLM (primary)</td>
+      <td>Gemini 3.1 Flash-Lite (free tier) via <code>langchain-google-genai</code></td>
+    </tr>
+    <tr>
+      <td>LLM (dev-time)</td>
+      <td>Groq free tier (Llama 3.3 70B) or local Ollama</td>
+    </tr>
+    <tr>
+      <td>Structured outputs</td>
+      <td>Pydantic + <code>with_structured_output</code></td>
+    </tr>
+    <tr>
+      <td>Resilience</td>
+      <td><code>tenacity</code> (exponential backoff on all LLM calls)</td>
+    </tr>
+    <tr>
+      <td>Data handling</td>
+      <td><code>pandas</code>, <code>pyarrow</code> (parquet snapshots)</td>
+    </tr>
+    <tr>
+      <td>Classical ML</td>
+      <td>scikit-learn, XGBoost, LightGBM</td>
+    </tr>
+    <tr>
+      <td>Hyperparameter tuning</td>
+      <td>Optuna (local, TPE sampler)</td>
+    </tr>
+    <tr>
+      <td>Feature selection</td>
+      <td>scikit-learn (<code>mutual_info</code>, <code>VarianceThreshold</code>), <code>feature-engine</code></td>
+    </tr>
+    <tr>
+      <td>Experiment tracking</td>
+      <td>MLflow (local file-store mode)</td>
+    </tr>
+    <tr>
+      <td>Testing</td>
+      <td>pytest, pytest-cov</td>
+    </tr>
+
+    <tr>
+      <td>Package management</td>
+      <td><code>uv</code></td>
+    </tr>
+    <tr>
+      <td>CLI</td>
+      <td><code>Typer</code> + <code>rich</code> (Day-10: replaces scattered <code>argparse</code> scripts)</td>
+    </tr>
+    <tr>
+      <td>MCP</td>
+      <td><code>FastMCP</code> server (streamable-http + stdio) for external agent integration</td>
+    </tr>
+    <tr>
+      <td>Model persistence</td>
+      <td><code>joblib</code> — model + <code>PrepArtifacts</code> bundle</td>
+    </tr>
+  </tbody>
+</table>
+
 </details>
----
  
 ## License
  

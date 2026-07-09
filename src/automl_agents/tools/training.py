@@ -83,6 +83,109 @@ def _get_regression_models() -> dict:
     return models
 
 
+def _build_estimator(
+    model_id: str,
+    problem_type: Literal["classification", "regression"],
+    params: dict | None = None,
+):
+    """Construct an unfitted estimator for *model_id* using the given params.
+
+    This is the single authoritative model-name-to-class mapping for the whole
+    project.  Both ``tune_model`` (which builds candidates per Optuna trial) and
+    ``model_export.fit_final_model`` (which builds the winning model once for
+    deployment) call this helper so the mapping is never duplicated.
+
+    ``params`` mirrors the key names returned by Optuna's ``study.best_params``.
+    If ``params`` is None or missing a key, sensible defaults are used.
+
+    Returns a scikit-learn-compatible unfitted estimator (``BaseEstimator`` API).
+    Raises ``ValueError`` for unknown ``model_id`` strings.
+    """
+    p = params or {}
+
+    if model_id in ("LogisticRegression",):
+        return LogisticRegression(C=p.get("C", 1.0), max_iter=1000, random_state=42)
+
+    if model_id == "LinearRegression":
+        return LinearRegression(fit_intercept=p.get("fit_intercept", True))
+
+    if model_id == "RandomForest":
+        kw = dict(
+            n_estimators=p.get("n_estimators", 100),
+            max_depth=p.get("max_depth", None),
+            random_state=42,
+            n_jobs=-1,
+        )
+        if problem_type == "classification":
+            return RandomForestClassifier(**kw)
+        return RandomForestRegressor(**kw)
+
+    if model_id == "GradientBoosting":
+        kw = dict(
+            learning_rate=p.get("learning_rate", 0.1),
+            n_estimators=p.get("n_estimators", 100),
+            max_depth=p.get("max_depth", 3),
+            random_state=42,
+        )
+        if problem_type == "classification":
+            return GradientBoostingClassifier(**kw)
+        return GradientBoostingRegressor(**kw)
+
+    if model_id == "XGBoost":
+        kw = dict(
+            learning_rate=p.get("learning_rate", 0.1),
+            n_estimators=p.get("n_estimators", 100),
+            max_depth=p.get("max_depth", 6),
+            random_state=42,
+            n_jobs=-1,
+        )
+        if problem_type == "classification":
+            if XGBClassifier is None:
+                raise ImportError("xgboost is not installed.")
+            return XGBClassifier(eval_metric="logloss", **kw)
+        if XGBRegressor is None:
+            raise ImportError("xgboost is not installed.")
+        return XGBRegressor(**kw)
+
+    if model_id == "LightGBM":
+        kw = dict(
+            learning_rate=p.get("learning_rate", 0.1),
+            n_estimators=p.get("n_estimators", 100),
+            max_depth=p.get("max_depth", -1),
+            num_leaves=p.get("num_leaves", 31),
+            random_state=42,
+            verbose=-1,
+            n_jobs=-1,
+        )
+        if problem_type == "classification":
+            if LGBMClassifier is None:
+                raise ImportError("lightgbm is not installed.")
+            return LGBMClassifier(**kw)
+        if LGBMRegressor is None:
+            raise ImportError("lightgbm is not installed.")
+        return LGBMRegressor(**kw)
+
+    if model_id in ("SVM", "SVR"):
+        kw = dict(C=p.get("C", 1.0), gamma=p.get("gamma", "scale"))
+        if problem_type == "classification":
+            return CalibratedClassifierCV(SVC(random_state=42, **kw), ensemble=False)
+        return SVR(**kw)
+
+    if model_id == "KNN":
+        kw = dict(
+            n_neighbors=p.get("n_neighbors", 5),
+            weights=p.get("weights", "uniform"),
+        )
+        if problem_type == "classification":
+            return KNeighborsClassifier(**kw)
+        return KNeighborsRegressor(**kw)
+
+    raise ValueError(
+        f"Unknown model_id '{model_id}'. Valid values: LogisticRegression, LinearRegression, "
+        "RandomForest, GradientBoosting, XGBoost, LightGBM, SVM, SVR, KNN."
+    )
+
+
 def run_model_battery(
     df: pd.DataFrame,
     target: str,

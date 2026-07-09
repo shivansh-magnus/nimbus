@@ -132,8 +132,8 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             {"role": "user", "content": user_prompt},
         ])
 
-        plan = response["parsed"]
-        raw_msg = response["raw"]
+        plan = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Step 3: Map PrepPlanSchema back into PrepConfig format
         impute_dict = {}

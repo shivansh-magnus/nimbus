@@ -87,8 +87,8 @@ def profiler_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             {"role": "user", "content": user_prompt},
         ])
 
-        analysis = response["parsed"]
-        raw_msg = response["raw"]
+        analysis = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Save concerns to report
         report.concerns = analysis.concerns

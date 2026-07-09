@@ -50,7 +50,17 @@ def validate_graph_completion(final_state):
     return None
 
 
-def main():
+def run_stress_test() -> dict:
+    """Run the end-to-end StateGraph pipeline across all local datasets.
+
+    Returns a summary dict with keys:
+      - "results": list of per-dataset result dicts
+      - "report_path": absolute path to the markdown summary file
+      - "all_passed": bool, True iff every dataset succeeded
+
+    Day-10: extracted from main() so the Typer CLI and MCP server can both
+    call this function directly.
+    """
     print("==================================================")
     print("          AutoML Pipeline Stress Tester           ")
     print("==================================================")
@@ -124,10 +134,12 @@ def main():
             "selection_rationale": "",
             "model_results": [],
             "best_model_id": None,
+            "model_path": None,
             "report_path": None,
             "stage_log": [],
             "retry_count": {},
             "token_usage": [],
+            "validation_errors": None,
         }
 
         context = {
@@ -235,10 +247,20 @@ def main():
                 status_icon = "✅ PASS" if res["pass"] else "❌ FAIL"
                 md_content.append(f"| {metric} | {status_icon} | {res['detail']} |")
 
-    report_path = stress_runs_dir / "stress_test_report.md"
-    with open(report_path, "w", encoding="utf-8") as f:
+    report_path_obj = stress_runs_dir / "stress_test_report.md"
+    with open(report_path_obj, "w", encoding="utf-8") as f:
         f.write("\n".join(md_content))
-    print(f"\nWritten detailed markdown report to: {report_path.resolve()}\n")
+    print(f"\nWritten detailed markdown report to: {report_path_obj.resolve()}\n")
+
+    return {
+        "results": results,
+        "report_path": str(report_path_obj.resolve()),
+        "all_passed": all(r["status"] == "Success" for r in results),
+    }
+
+
+def main():
+    run_stress_test()
 
 
 if __name__ == "__main__":

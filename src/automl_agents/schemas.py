@@ -140,6 +140,9 @@ class PipelineState(TypedDict):
     model_results: list[dict]  # per-candidate CV scores
     best_model_id: str | None
     validation_errors: list[str] | None
+    # Path to the joblib bundle: runs/{run_id}/model.pkl
+    # Contains {model, prep_artifacts, selected_features, target_column, problem_type, model_id}
+    model_path: str | None
 
     # --- reporting stage ---
     report_path: str | None

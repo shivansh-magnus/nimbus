@@ -37,6 +37,7 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
     prep_plan = state["prep_plan"]
     stage_log = state["stage_log"]
     token_usage = list(state["token_usage"])
+    model_path = state.get("model_path")
 
     # Get runtime config for LLM
     context = runtime.context
@@ -74,8 +75,8 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             {"role": "user", "content": user_prompt},
         ])
 
-        summary_data = response["parsed"]
-        raw_msg = response["raw"]
+        summary_data = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Record reporter stage token usage
         reporter_token_entry = record_token_usage("reporter", provider, model or "default", raw_msg)
@@ -127,6 +128,14 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         if model_results:
             report_content.append("## 4. Model Battery Results")
             report_content.append(f"### Best Model: **{best_model_id}**\n")
+            if model_path:
+                report_content.append(f"- **Saved model bundle**: `{model_path}`")
+                report_content.append(
+                    "  *(Load with `load_model_bundle(path)` + call `predict_from_bundle(bundle, df_raw)` for zero-skew inference)*"
+                )
+            else:
+                report_content.append("- **Saved model bundle**: not available (export failed or skipped).")
+            report_content.append("")
             report_content.append("| Model ID | Metric | Mean Validation Score | Std Dev |")
             report_content.append("| --- | --- | --- | --- |")
             for res in model_results:
@@ -214,10 +223,15 @@ def reporter_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
                 report_path_str = str(report_path.resolve())
                 if os.path.exists(report_path_str):
                     mlflow.log_artifact(report_path_str, artifact_path="reports")
-                
-                cleaned_path = state.get("cleaned_data_path")
-                if cleaned_path and os.path.exists(cleaned_path):
-                    mlflow.log_artifact(cleaned_path, artifact_path="datasets")
+
+                cleaned_path_val = state.get("cleaned_data_path")
+                if cleaned_path_val and os.path.exists(cleaned_path_val):
+                    mlflow.log_artifact(cleaned_path_val, artifact_path="datasets")
+
+                # Day-10: log the model bundle alongside report and parquet
+                if model_path and os.path.exists(model_path):
+                    mlflow.log_artifact(model_path, artifact_path="models")
+                    logger.info(f"Logged model bundle to MLflow: {model_path}")
                     
             logger.info("Successfully tracked experiment run in MLflow.")
         except Exception as mlflow_e:

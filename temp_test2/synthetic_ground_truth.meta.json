@@ -1,0 +1,20 @@
+{
+  "leaky_columns": [
+    "leaky_churn_copy"
+  ],
+  "drop_columns": [
+    "all_null_feature",
+    "customer_id"
+  ],
+  "high_null_columns": [
+    "annual_income",
+    "tenure_months",
+    "credit_score_text",
+    "signup_date"
+  ],
+  "single_category_columns": [
+    "legacy_flag"
+  ],
+  "expected_problem_type": "classification",
+  "expected_target": "churn"
+}
