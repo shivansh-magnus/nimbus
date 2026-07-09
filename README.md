@@ -235,6 +235,9 @@ Here are the commands available:
 
 * **`uv run nimbus download-data`**
   Fetches standard real-world CSV datasets (Titanic, Wine Quality, California Housing) and saves them under `data/raw/` with a manifest.
+
+<img width="1042" height="412" alt="image" src="https://github.com/user-attachments/assets/21fd5482-e334-4dd9-9821-6d5090839f47" />
+
  
 ---
  
