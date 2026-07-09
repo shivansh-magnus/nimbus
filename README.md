@@ -30,7 +30,6 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraph), running on Gemi
 - [Testing](#testing)
 - [Known Limitations](#known-limitations)
 - [Design Decisions](#design-decisions)
-- [Build Log](#build-log)
 - [Tech Stack](#tech-stack)
 - [License](#license)
 ---
@@ -403,28 +402,6 @@ Two different failure modes, two different answers. A leakage-suspicious result 
 A bigger, paid model for the reasoning-heavy Profiler step; real sandboxing (gVisor/Firecracker-grade, not just subprocess isolation) for the code-execution escape hatch; a human approval gate before applying transformations to real data; moving from file-based state to a proper job queue; wiring `max_retries` and `token_budget` through instead of leaving them as unused config fields.
  
 ---
- 
-## Build Log
- 
-<details>
-<summary><strong>10-day build sequence (click to expand)</strong></summary>
-| Day | Focus | Exit criteria |
-|---|---|---|
-| 1 | Repo scaffold, provider-agnostic `get_llm()`, `PipelineState`/`EDAReport` schema design | `.env` works with both providers; schema drafted with no Gemini-unsafe shapes |
-| 2 | Deterministic profiling tools — dtype inference, missingness, cardinality, correlation, IQR outliers | pytest green on 2–3 sample CSVs |
-| 3 | Deterministic prep tools — imputation, encoders, scalers, dedupe, datetime features | Unit tests on synthetic edge cases (all-null column, single-category column, mixed-type column) |
-| 4 | Feature selection tools + fixed CV model battery | Selection + battery run standalone via `run_battery_standalone.py` |
-| 5 | Wire the `StateGraph` — static edges, hardcoded node defaults, no agentic reasoning yet | Full pipeline runs end-to-end on one clean dataset, produces a report file |
-| 6 | LLM decision layer — `with_structured_output` in Profiler, Data Prep, Selector | Pipeline makes real per-column decisions instead of hardcoded defaults |
-| 7 | Conditional edges — classification/regression branch, leakage validation, bounded retry loop | Deliberately "broken" dataset (injected leakage) confirms the retry path fires and terminates |
-| 8 | Optuna tuning, MLflow tracking, token-usage logging, `tenacity` backoff on all LLM calls | A run produces an MLflow-logged experiment + token-usage table in the report |
-| 9 | Stress test across all datasets; sandboxed `run_custom_transform` escape hatch; agent evals | All datasets complete without manual intervention; failures are handled, not crashes |
-| 10 | Polish — README, architecture diagram, design-decision writeup, GitHub push, demo recording | A stranger could clone the repo, set an API key, and run it on a new CSV from the README alone |
- 
-</details>
----
- 
-## Tech Stack
  
 <details>
 <summary><strong>Full list (click to expand)</strong></summary>
