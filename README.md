@@ -543,7 +543,7 @@ A bigger, paid model for the reasoning-heavy Profiler step; real sandboxing (gVi
 ---
  
 <details>
-<summary><strong>Full list (click to expand)</strong></summary>
+<summary><strong>Tech Stack (click to expand)</strong></summary>
 
 <table>
   <thead>
