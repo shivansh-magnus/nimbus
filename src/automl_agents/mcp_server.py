@@ -49,6 +49,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402 -- after sys.path fixup
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import PlainTextResponse  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 mcp = FastMCP("nimbus-automl")
+
+# ---------------------------------------------------------------------------
+# Health check / root route (for cloud hosting platform checks like Render)
+# ---------------------------------------------------------------------------
+@mcp.custom_route("/", methods=["GET", "HEAD"])
+async def root_check(request: Request) -> PlainTextResponse:
+    return PlainTextResponse("OK")
+
 
 # Allow-listed directory for dataset_path arguments.  Arbitrary filesystem
 # paths are rejected before the graph ever runs.
@@ -273,6 +283,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.transport == "streamable-http":
+        mcp.settings.host = "0.0.0.0"  # Bind to all interfaces for cloud port mapping
         mcp.settings.port = args.port
         mcp.run(transport="streamable-http")
     else:
