@@ -385,7 +385,7 @@ Stated plainly, because knowing the limits of what you built is worth more than 
 - **No human approval gate** before a prep plan or custom transform is applied — appropriate for a portfolio/demo project, not for a production data pipeline touching real customer data.
 ---
  
-## Design Decisions (Interview Q&A)
+## Design Decisions
  
 **Why multi-agent instead of one agent with a big prompt?**
 Context isolation per stage means smaller, more reliable structured outputs per call, and the ability to unit-test and swap individual stages independently — a bad Feature Selector decision doesn't require re-prompting the whole pipeline's context.
