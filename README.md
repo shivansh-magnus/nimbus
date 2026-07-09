@@ -71,31 +71,25 @@ Nimbus is built around three explicit positions:
 ### Pipeline Graph
  
 ```mermaid
-flowchart TD
+flowchart LR
     START([START]) --> P["Profiler<br/>profiler_node"]
-    P -- classification --> CP["Data Prep<br/>prep_node"]
-    P -- regression --> RP["Data Prep<br/>prep_node"]
-    CP --> CS["Feature Selector<br/>selector_node"]
-    RP --> RS["Feature Selector<br/>selector_node"]
-    CS --> CT["Trainer<br/>trainer_node"]
-    RS --> RT["Trainer<br/>trainer_node"]
-    CT -- validation ok --> REP["Reporter<br/>reporter_node"]
-    RT -- validation ok --> REP
-    CT -- "leakage suspected, retries < 2" --> SUP["Retry Supervisor<br/>retry_supervisor_node"]
-    RT -- "leakage suspected, retries < 2" --> SUP
-    SUP -- classification --> CP
-    SUP -- regression --> RP
+    P -- "problem_type" --> DP["Data Prep<br/>prep_node"]
+    DP --> FS["Feature Selector<br/>selector_node"]
+    FS --> TR["Trainer<br/>trainer_node"]
+    TR -- "validation ok" --> REP["Reporter<br/>reporter_node"]
+    TR -- "leakage suspected<br/>retries < 2" --> SUP["Retry Supervisor<br/>retry_supervisor_node"]
+    SUP -.-> DP
     REP --> END(["END"])
  
     classDef agentic fill:#2d2d44,stroke:#8b7fd6,color:#fff;
     classDef deterministic fill:#1e3a3a,stroke:#4fd6c4,color:#fff;
-    class P,CP,RP,CS,RS,SUP,REP agentic;
-    class CT,RT deterministic;
+    class P,DP,FS,SUP,REP agentic;
+    class TR deterministic;
 ```
  
-*Purple = agentic (LLM structured-output call inside the node). Teal = mostly deterministic.*
+*Purple = agentic (LLM structured-output call inside the node). Teal = mostly deterministic. Dashed edge = the bounded retry loop.*
  
-The classification and regression branches aren't two different implementations — `classification_prep` and `regression_prep` are the same `prep_node` function registered twice under different graph node names, same for the selector and trainer. This keeps the graph topology explicit and easy to trace during debugging or a demo, without duplicating logic (see [Design Decisions](#design-decisions-interview-qa)).
+Simplified on purpose: `Data Prep`, `Feature Selector`, and `Trainer` are each drawn as one box, but in `pipeline.py` they're registered as **two graph nodes apiece** — `classification_prep`/`regression_prep`, `classification_selector`/`regression_selector`, `classification_trainer`/`regression_trainer` — all pointing at the same underlying function (`prep_node`, `selector_node`, `trainer_node`). `route_after_profiler` picks the branch right after the Profiler; `route_after_supervisor` picks it again on the way back from a retry. Same logic, two node names, so LangGraph's own execution logs stay traceable without duplicating code (see [Design Decisions](#design-decisions-interview-qa)).
  
 ### The Agent Roster
  
