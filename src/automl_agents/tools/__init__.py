@@ -21,3 +21,7 @@ from automl_agents.tools.preprocessor import (  # noqa: F401
 # --- Day 4: selection & training tools ---
 from automl_agents.tools.selection import run_selection  # noqa: F401
 from automl_agents.tools.training import run_model_battery  # noqa: F401
+
+# --- Day 9: custom transform tools ---
+from automl_agents.tools.custom_transform import run_custom_transform_sandboxed  # noqa: F401
+
