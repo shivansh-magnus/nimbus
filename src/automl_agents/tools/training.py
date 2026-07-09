@@ -20,6 +20,7 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -113,6 +114,8 @@ def run_model_battery(
 
     # Initialize CV splitters
     if problem_type == "classification":
+        label_encoder = LabelEncoder()
+        y = pd.Series(label_encoder.fit_transform(y), index=y.index, name=target)
         splitter = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         models = _get_classification_models()
         # Determine average parameter for f1_score based on classes
@@ -202,6 +205,8 @@ def tune_model(
     X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
 
     if problem_type == "classification":
+        label_encoder = LabelEncoder()
+        y = pd.Series(label_encoder.fit_transform(y), index=y.index, name=target)
         splitter = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         unique_classes = np.unique(y)
         f1_avg = "binary" if len(unique_classes) <= 2 else "macro"

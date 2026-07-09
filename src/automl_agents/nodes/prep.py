@@ -66,6 +66,10 @@ class PrepPlanSchema(BaseModel):
         default=1.5,
         description="IQR outlier clipping multiplier (e.g., 1.5). Use None to skip outlier clipping.",
     )
+    custom_code: str | None = Field(
+        default=None,
+        description="Optional Python code snippet using pandas (dataframe variable is 'df') to perform custom transformations. Use ONLY when standard tools (impute, encode, scale) are insufficient.",
+    )
 
 
 def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
@@ -76,7 +80,12 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
     eda_report = state["eda_report"]
 
     if not eda_report:
-        raise ValueError("Missing 'eda_report' in PipelineState.")
+        log_entry: StageLogEntry = {
+            "stage": "data_prep",
+            "status": "failed",
+            "message": "Preprocessing skipped: upstream 'eda_report' is missing (profiler likely failed).",
+        }
+        return {"stage_log": [log_entry]}
 
     # Get runtime config for LLM
     context = runtime.context
@@ -95,7 +104,15 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             "Pay close attention to the list of concerns (especially potential target leakage or target duplicates, which MUST be dropped).\n"
             "Determine which columns to drop completely, which columns are datetime or mixed numeric types, "
             "and the imputation / encoding action for all other feature columns.\n"
-            "Do NOT apply any actions to the target column."
+            "Do NOT apply any actions to the target column.\n\n"
+            "IMPORTANT — execution order: drop_cols, datetime_cols, mixed_numeric_cols, impute, encode, and "
+            "scaling are all applied BEFORE custom_code runs. By the time custom_code executes, any column "
+            "listed in datetime_cols has already been parsed into <col>_year/_month/_day/_dayofweek and the "
+            "raw column has already been DROPPED. Any column in mixed_numeric_cols has already been coerced "
+            "to numeric. Never reference a column inside custom_code that you already declared in drop_cols, "
+            "datetime_cols, or mixed_numeric_cols — choose exactly one mechanism per column. Only use "
+            "custom_code for logic the structured fields above cannot express (e.g. combining two columns "
+            "into a ratio, or parsing a format not covered by the standard tools)."
         )
         user_prompt = (
             f"Target Column: {target_column}\n\n"
@@ -143,6 +160,12 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         artifacts = fit_preprocessor(df, target_column, config=config)
         df_prepped = transform_preprocessor(df, artifacts)
 
+        # Apply custom code sandbox if provided by agent
+        if plan.custom_code:
+            logger.info(f"Custom code detected from agent:\n{plan.custom_code}")
+            from automl_agents.tools.custom_transform import run_custom_transform_sandboxed
+            df_prepped = run_custom_transform_sandboxed(plan.custom_code, df_prepped)
+
         # Step 5: Save Parquet snapshot
         runs_dir = Path("runs") / run_id
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +183,7 @@ def prep_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
 
         # prep_plan in PipelineState expects a dict (serialize dataclass)
         serialized_plan = dataclasses.asdict(config)
+        serialized_plan["custom_code"] = plan.custom_code
 
         return {
             "cleaned_data_path": str(cleaned_parquet_path.resolve()),

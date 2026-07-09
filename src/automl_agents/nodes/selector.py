@@ -44,10 +44,14 @@ def selector_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
     target_column = state["target_column"]
     eda_report = state["eda_report"]
 
-    if not cleaned_path:
-        raise ValueError("Missing 'cleaned_data_path' in PipelineState.")
-    if not eda_report:
-        raise ValueError("Missing 'eda_report' in PipelineState.")
+    if not cleaned_path or not eda_report:
+        missing = "cleaned_data_path" if not cleaned_path else "eda_report"
+        log_entry: StageLogEntry = {
+            "stage": "selector",
+            "status": "failed",
+            "message": f"Feature selection skipped: upstream '{missing}' is missing (data_prep likely failed).",
+        }
+        return {"stage_log": [log_entry]}
 
     # Get runtime config for LLM
     context = runtime.context

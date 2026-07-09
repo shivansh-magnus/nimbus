@@ -36,12 +36,19 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
     target_column = state["target_column"]
     eda_report = state["eda_report"]
 
-    if not cleaned_path:
-        raise ValueError("Missing 'cleaned_data_path' in PipelineState.")
-    if not eda_report:
-        raise ValueError("Missing 'eda_report' in PipelineState.")
-    if not selected_features:
-        raise ValueError("No features selected for training.")
+    if not cleaned_path or not eda_report or not selected_features:
+        if not cleaned_path:
+            missing = "cleaned_data_path (data_prep likely failed)"
+        elif not eda_report:
+            missing = "eda_report (profiler likely failed)"
+        else:
+            missing = "selected_features (selector likely failed or selected zero features)"
+        log_entry: StageLogEntry = {
+            "stage": "trainer",
+            "status": "failed",
+            "message": f"Training skipped: {missing}.",
+        }
+        return {"stage_log": [log_entry]}
 
     # Get runtime config for LLM
     context = runtime.context
@@ -130,7 +137,7 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         # B. Score Check: Flag perfect cross-validation scores (excluding SVM)
         for res in results:
             model_id = res.get("model_id")
-            if model_id == "SVM":
+            if model_id and (model_id.startswith("SVM") or model_id.startswith("SVR")):
                 continue
             mean_scores = res.get("mean_scores", {})
             for metric, val in mean_scores.items():
