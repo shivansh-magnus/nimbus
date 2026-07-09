@@ -1,10 +1,13 @@
 """
 Day-6 LangGraph node for agentic model battery training using LLM metric selection.
+Day-10 addition: after best_model_id is chosen, refits the winner on the full
+selected/preprocessed dataset and persists a self-contained joblib bundle.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from pydantic import BaseModel, Field
 from langgraph.runtime import Runtime
 
@@ -29,7 +32,8 @@ class TrainerMetricSelection(BaseModel):
 
 
 def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
-    """Agentic trainer node: queries the LLM for a metric, then runs the battery and ranks models."""
+    """Agentic trainer node: queries the LLM for a metric, runs the battery, ranks models,
+    and persists the winning model as a self-contained joblib bundle."""
     logger.info("Starting model battery training...")
     cleaned_path = state["cleaned_data_path"]
     selected_features = state["selected_features"]
@@ -48,12 +52,13 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             "status": "failed",
             "message": f"Training skipped: {missing}.",
         }
-        return {"stage_log": [log_entry]}
+        return {"stage_log": [log_entry], "model_path": None}
 
     # Get runtime config for LLM
     context = runtime.context
     provider = context.get("llm_provider", "gemini")
     model = context.get("model_name")
+    run_id = context.get("run_id", "default_run")
 
     try:
         # Step 1: Query LLM to select optimization metric
@@ -87,8 +92,8 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
             {"role": "user", "content": user_prompt},
         ])
 
-        selection = response["parsed"]
-        raw_msg = response["raw"]
+        selection = response["parsed"]  # type: ignore[index]
+        raw_msg = response["raw"]  # type: ignore[index]
 
         # Validate metric choice
         chosen_metric = selection.metric.lower().strip()
@@ -134,22 +139,22 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
                 except Exception as corr_e:
                     logger.warning(f"Correlation check failed for column {col}: {corr_e}")
 
-        # B. Score Check: Flag perfect cross-validation scores (excluding SVM)
+        # B. Score Check: Flag perfect cross-validation scores (excluding SVM/SVR)
         for res in results:
-            model_id = res.get("model_id")
-            if model_id and (model_id.startswith("SVM") or model_id.startswith("SVR")):
+            model_id_check = res.get("model_id")
+            if model_id_check and (model_id_check.startswith("SVM") or model_id_check.startswith("SVR")):
                 continue
             mean_scores = res.get("mean_scores", {})
             for metric, val in mean_scores.items():
                 if problem_type == "classification" and metric in ["accuracy", "f1"]:
                     if val >= 1.0:
                         validation_errors.append(
-                            f"Model '{model_id}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
+                            f"Model '{model_id_check}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
                         )
                 elif problem_type == "regression" and metric == "r2":
                     if val >= 1.0:
                         validation_errors.append(
-                            f"Model '{model_id}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
+                            f"Model '{model_id_check}' achieved perfect score {val:.4f} on '{metric}' -- potential target leakage."
                         )
 
         if validation_errors:
@@ -158,7 +163,7 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         # Run Optuna tuning ONLY if no leakage was detected
         if not validation_errors:
             is_smaller_better = chosen_metric in ["rmse", "mae"]
-            
+
             def get_model_metric_score(r):
                 score = r.get("mean_scores", {}).get(chosen_metric)
                 if score is None:
@@ -170,7 +175,7 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
                 key=get_model_metric_score,
                 reverse=not is_smaller_better,
             )
-            
+
             top_candidates = []
             for r in sorted_results:
                 m_id = r["model_id"]
@@ -218,18 +223,75 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         if best_model_id is None:
             best_model_id = results[0]["model_id"]
 
-        # Step 5: Record token usage
+        # Step 5: Fit the winning model on the FULL dataset and persist the bundle.
+        # CV folds are for evaluation only; we refit once on all available training signal
+        # for the actual deployment artifact.  This is safe: CV's job (honest score
+        # estimation) is already done above.  The export is best-effort — a failure here
+        # must never crash the run, because the run still has valid scores and a report.
+        model_path_str: str | None = None
+        try:
+            from automl_agents.tools.model_export import fit_final_model, save_model_bundle
+            from automl_agents.tools.preprocessor import fit_preprocessor, transform_preprocessor
+
+            # Retrieve best_params for the winning model if it came from Optuna.
+            # Tuned results carry a "best_params" key; baseline results do not.
+            winning_params: dict | None = None
+            for res in results:
+                if res["model_id"] == best_model_id and "best_params" in res:
+                    winning_params = res["best_params"]
+                    break
+
+            # Re-fit preprocessing artifacts on df_sliced (features + target only).
+            # We need PrepArtifacts for the bundle — they aren't in PipelineState
+            # (only the parquet path is stored there per the Day-3 leakage contract).
+            # Refitting here is not leakage: CV is finished; this is purely to capture
+            # the fit-time statistics for the deployment bundle.
+            artifacts = fit_preprocessor(df_sliced, target_column)
+            df_for_export = transform_preprocessor(df_sliced, artifacts)
+
+            final_estimator = fit_final_model(
+                df_for_export,
+                target_column,
+                best_model_id,
+                problem_type,
+                best_params=winning_params,
+            )
+
+            bundle_path = save_model_bundle(
+                estimator=final_estimator,
+                prep_artifacts=artifacts,
+                selected_features=selected_features,
+                target_column=target_column,
+                problem_type=problem_type,
+                model_id=best_model_id,
+                output_path=Path("runs") / run_id / "model.pkl",
+            )
+            model_path_str = str(bundle_path)
+            logger.info(f"Model bundle saved to {model_path_str}")
+        except Exception as export_e:
+            logger.warning(
+                f"Model export failed and was skipped; pipeline continues without model.pkl: {export_e}",
+                exc_info=True,
+            )
+
+        # Step 6: Record token usage
         token_entry = record_token_usage("trainer", provider, model or "default", raw_msg)
 
         log_entry: StageLogEntry = {
             "stage": "trainer",
             "status": "ok",
-            "message": f"Trained CV model battery and tuned top candidates. Best model: {best_model_id} (using LLM-chosen metric '{chosen_metric}'). Rationale: {selection.rationale}",
+            "message": (
+                f"Trained CV model battery and tuned top candidates. "
+                f"Best model: {best_model_id} (using LLM-chosen metric '{chosen_metric}'). "
+                f"Rationale: {selection.rationale}"
+                + (f"  Model bundle: {model_path_str}" if model_path_str else "  Model export skipped.")
+            ),
         }
 
         return {
             "model_results": results,
             "best_model_id": best_model_id,
+            "model_path": model_path_str,
             "validation_errors": validation_errors if validation_errors else None,
             "stage_log": [log_entry],
             "token_usage": [token_entry],
@@ -244,4 +306,5 @@ def trainer_node(state: PipelineState, runtime: Runtime[RunConfig]) -> dict:
         }
         return {
             "stage_log": [log_entry],
+            "model_path": None,
         }

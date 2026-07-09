@@ -122,9 +122,19 @@ def generate_synthetic_dataset(
 
     project_root = root or output_dir.parents[1]
 
+    try:
+        rel_path = str(dest.relative_to(project_root)).replace("\\", "/")
+    except ValueError:
+        rel_path = str(dest.resolve()).replace("\\", "/")
+
+    try:
+        rel_gt_path = str(sidecar.relative_to(project_root)).replace("\\", "/")
+    except ValueError:
+        rel_gt_path = str(sidecar.resolve()).replace("\\", "/")
+
     return {
         "id": "synthetic_ground_truth",
-        "path": str(dest.relative_to(project_root)).replace("\\", "/"),
+        "path": rel_path,
         "filename": DEFAULT_FILENAME,
         "target_column": "churn",
         "problem_type": "classification",
@@ -135,8 +145,9 @@ def generate_synthetic_dataset(
         "n_rows": int(len(df)),
         "n_cols": int(len(df.columns)),
         "columns": list(df.columns),
-        "ground_truth_path": str(sidecar.relative_to(project_root)).replace("\\", "/"),
+        "ground_truth_path": rel_gt_path,
     }
+
 
 
 def main() -> int:

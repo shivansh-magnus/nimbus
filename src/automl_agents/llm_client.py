@@ -36,7 +36,7 @@ def get_llm(provider: str | None = None, model: str | None = None, temperature: 
     failing deep inside a graph node.
     """
     provider = (provider or os.getenv("LLM_PROVIDER", "gemini")).lower()
-    model = model or os.getenv(f"{provider.upper()}_MODEL", _DEFAULT_MODELS.get(provider))
+    model = model or os.getenv(f"{provider.upper()}_MODEL") or _DEFAULT_MODELS.get(provider, "gemini-3.1-flash-lite")
 
     if provider == "gemini":
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -57,8 +57,9 @@ def get_llm(provider: str | None = None, model: str | None = None, temperature: 
                 "and put it in your .env file."
             )
         from langchain_groq import ChatGroq
+        from pydantic import SecretStr
 
-        return ChatGroq(model=model, temperature=temperature, api_key=api_key)
+        return ChatGroq(model=model, temperature=temperature, api_key=SecretStr(api_key))
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama  # pip install langchain-ollama if you use this path
@@ -80,4 +81,4 @@ def ping(provider: str | None = None) -> str:
     Retries with exponential backoff on transient/rate-limit errors."""
     llm = get_llm(provider=provider)
     response = llm.invoke("Reply with exactly one word: OK")
-    return response.content
+    return str(response.content)
