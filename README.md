@@ -594,23 +594,6 @@ A bigger, paid model for the reasoning-heavy Profiler step; real sandboxing (gVi
       <td>Testing</td>
       <td>pytest, pytest-cov</td>
     </tr>
-
-    <tr>
-      <td>Package management</td>
-      <td><code>uv</code></td>
-    </tr>
-    <tr>
-      <td>CLI</td>
-      <td><code>Typer</code> + <code>rich</code> (Day-10: replaces scattered <code>argparse</code> scripts)</td>
-    </tr>
-    <tr>
-      <td>MCP</td>
-      <td><code>FastMCP</code> server (streamable-http + stdio) for external agent integration</td>
-    </tr>
-    <tr>
-      <td>Model persistence</td>
-      <td><code>joblib</code> — model + <code>PrepArtifacts</code> bundle</td>
-    </tr>
   </tbody>
 </table>
 
