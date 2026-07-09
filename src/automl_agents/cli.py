@@ -267,7 +267,8 @@ def serve_mcp(
             title="[bold cyan]Nimbus MCP Server - streamable-http[/bold cyan]",
             expand=False,
         ))
-        mcp.run(transport="streamable-http", port=port)
+        mcp.settings.port = port
+        mcp.run(transport="streamable-http")
     else:
         console.print("[dim]Starting Nimbus MCP server over stdio...[/dim]")
         mcp.run(transport="stdio")
